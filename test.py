@@ -9,15 +9,17 @@ from datetime import datetime
 from win32com.client import Dispatch
 
 def speak(str1):
-    speak = Dispatch(("SAPI.SpVoice"))
+    speak = Dispatch("SAPI.SpVoice")
     speak.Speak(str1)
 
 video = cv2.VideoCapture(0)
 facedetect = cv2.CascadeClassifier('data/haarcascade_frontalface_default.xml')
 
-# Load names and faces data
+# Load names, USNs, and faces data from pickle files
 with open('data/names.pkl', 'rb') as w:
     LABELS = pickle.load(w)
+with open('data/usns.pkl', 'rb') as f:
+    USNS = pickle.load(f)
 with open('data/faces_data.pkl', 'rb') as f:
     FACES = pickle.load(f)
 
@@ -28,10 +30,7 @@ knn.fit(FACES, LABELS)
 
 imgBackground = cv2.imread("background.png")
 
-# Define USNs for each student (make sure this list is ordered to match the LABELS list)
-usns = ["2022cs_ananyas_a", "2022cs_johndoe_b", "2022ece_maria_c"]  # Example USNs
-
-COL_NAMES = ['NAME', 'USN', 'DATE', 'TIME']
+COL_NAMES = ['NAME', 'USN', 'DATE', 'TIME']  # Include USN in the column names
 
 while True:
     ret, frame = video.read()
@@ -41,38 +40,51 @@ while True:
         crop_img = frame[y:y+h, x:x+w, :]
         resized_img = cv2.resize(crop_img, (50, 50)).flatten().reshape(1, -1)
         output = knn.predict(resized_img)
+        
+        # Get the predicted name and corresponding USN
+        name = output[0]
+        name_index = LABELS.index(name)
+        usn = USNS[name_index]  # Get corresponding USN
+        
         ts = time.time()
         date = datetime.fromtimestamp(ts).strftime("%d-%m-%Y")
         timestamp = datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+        
         exist = os.path.isfile("Attendance/Attendance_" + date + ".csv")
         
-        cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 1)
-        cv2.rectangle(frame, (x, y), (x+w, y+h), (50, 50, 255), 2)
-        cv2.rectangle(frame, (x, y-40), (x+w, y), (50, 50, 255), -1)
-        cv2.putText(frame, str(output[0]), (x, y-15), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 1)
-        cv2.rectangle(frame, (x, y), (x+w, y+h), (50, 50, 255), 1)
+        # Draw the face bounding box and labels on the frame
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 1)
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (50, 50, 255), 2)
+        cv2.rectangle(frame, (x, y - 40), (x + w, y), (50, 50, 255), -1)
+        cv2.putText(frame, f"Name: {name}", (x, y - 15), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 1)
+        cv2.putText(frame, f"USN: {usn}", (x, y + h + 30), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 1)
+
+        # Store attendance data
+        attendance = [name, usn, date, timestamp]
         
-        # Get the USN corresponding to the predicted name
-        student_index = LABELS.index(output[0])  # Get the index of the predicted name
-        attendance = [str(output[0]), str(usns[student_index]), str(date), str(timestamp)]  # Name, USN, Date, Time
-    
+    # Place the frame on top of the background image
     imgBackground[162:162 + 480, 55:55 + 640] = frame
-    cv2.imshow("Frame", imgBackground)
     
+    # Display the frame
+    cv2.imshow("Frame", imgBackground)
+
     k = cv2.waitKey(1)
-    if k == ord('o'):
-        speak("Attendance Taken..")
-        time.sleep(5)
-        if exist:
-            with open("Attendance/Attendance_" + date + ".csv", "+a") as csvfile:
+    
+    if k == ord('o'):  # When 'o' is pressed, mark attendance
+        speak("Attendance Marked..")
+        time.sleep(1)
+        
+        if exist:  # If the CSV for today exists, append attendance
+            with open("Attendance/Attendance_" + date + ".csv", "a", newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow(attendance)
-        else:
-            with open("Attendance/Attendance_" + date + ".csv", "+a") as csvfile:
+        else:  # If the CSV doesn't exist, create it and write headers
+            with open("Attendance/Attendance_" + date + ".csv", "w", newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow(COL_NAMES)
                 writer.writerow(attendance)
-    if k == ord('q'):
+
+    elif k == ord('b'):  # When 'b' is pressed, break the loop
         break
 
 video.release()
